@@ -1,0 +1,70 @@
+name: Apply KernelSU Patches
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  apply-patches:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Setup environment variables
+      run: |
+        echo "KERNEL_ROOT=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+        echo "Working in: $GITHUB_WORKSPACE"
+        
+    - name: Verify repository structure
+      run: |
+        echo "Isi repository lav419:"
+        ls -la
+        echo ""
+        echo "Mengecek direktori KernelSU:"
+        if [ -d "KernelSU" ]; then
+          echo "Direktori KernelSU ditemukan"
+          ls -la KernelSU/
+        else
+          echo "Peringatan: Direktori KernelSU tidak ditemukan"
+        fi
+        
+    - name: Apply KernelSU patch (jika file ada)
+      run: |
+        if [ -f "KernelSU/10_enable_susfs_for_ksu.patch" ]; then
+          echo "Menerapkan patch KernelSU..."
+          cd KernelSU
+          patch -p1 < 10_enable_susfs_for_ksu.patch
+          echo "Patch KernelSU berhasil diterapkan"
+        else
+          echo "File patch KernelSU tidak ditemukan, melewati langkah ini"
+        fi
+        
+    - name: Apply kernel patch (jika file ada)
+      run: |
+        if [ -f "50_add_susfs_in_kernel-4.19.patch" ]; then
+          echo "Menerapkan patch kernel..."
+          patch -p1 < 50_add_susfs_in_kernel-4.19.patch
+          echo "Patch kernel berhasil diterapkan"
+        else
+          echo "File patch kernel tidak ditemukan, melewati langkah ini"
+        fi
+        
+    - name: Commit and push changes (jika ada perubahan)
+      run: |
+        git config --local user.email "github-actions@github.com"
+        git config --local user.name "GitHub Actions"
+        git add .
+        
+        # Hanya commit jika ada perubahan
+        if ! git diff --staged --quiet; then
+          git commit -m "Apply KernelSU patches"
+          git push
+          echo "Perubahan telah di-push ke repository"
+        else
+          echo "Tidak ada perubahan yang perlu di-commit"
+        fi
