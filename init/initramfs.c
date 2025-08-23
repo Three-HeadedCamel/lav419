@@ -324,6 +324,15 @@ static int __init do_name(void)
 {
 	state = SkipIt;
 	next_state = Reset;
+
+	/* name_len > 0 && name_len <= PATH_MAX checked in do_header */
+	if (collected[name_len - 1] != '\0') {
+		pr_err("initramfs name without nulterm: %.*s\n",
+		       (int)name_len, collected);
+		error("malformed archive");
+		return 1;
+	}
+
 	if (strcmp(collected, "TRAILER!!!") == 0) {
 		free_hash();
 		return 0;
@@ -386,6 +395,12 @@ static int __init do_copy(void)
 
 static int __init do_symlink(void)
 {
+	if (collected[name_len - 1] != '\0') {
+		pr_err("initramfs symlink without nulterm: %.*s\n",
+		       (int)name_len, collected);
+		error("malformed archive");
+		return 1;
+	}
 	collected[N_ALIGN(name_len) + body_len] = '\0';
 	clean_path(collected, 0);
 	ksys_symlink(collected + N_ALIGN(name_len), collected);
@@ -609,7 +624,7 @@ static int __init skip_initramfs_param(char *str)
 {
 	if (*str)
 		return 0;
-	do_skip_initramfs = 1;
+	do_skip_initramfs = !IS_ENABLED(CONFIG_INITRAMFS_IGNORE_SKIP_FLAG);
 	return 1;
 }
 __setup("skip_initramfs", skip_initramfs_param);
@@ -641,6 +656,12 @@ static void __init populate_initrd_image(char *err)
 static int __init populate_rootfs(void)
 {
 	char *err;
+
+	if (do_skip_initramfs) {
+		if (initrd_start)
+			free_initrd();
+		return default_rootfs();
+	}
 
 	/* Load the built in initramfs */
 	err = unpack_to_rootfs(__initramfs_start, __initramfs_size);

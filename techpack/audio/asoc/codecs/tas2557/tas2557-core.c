@@ -79,6 +79,7 @@ static unsigned int p_tas2557_default_data[] = {
 	TAS2557_SAR_ADC2_REG, 0x05,	/* enable SAR ADC */
 	TAS2557_CLK_ERR_CTRL2, 0x21,	/*clk1:clock hysteresis, 0.34ms; clock halt, 22ms*/
 	TAS2557_CLK_ERR_CTRL3, 0x21,	/*clk2: rampDown 15dB/us, clock hysteresis, 10.66us; clock halt, 22ms */
+	TAS2557_DBOOST_CFG_REG, 0x0b,   /* HTC_AUD: Solve full band noise */
 	TAS2557_SAFE_GUARD_REG, TAS2557_SAFE_GUARD_PATTERN,	/* safe guard */
 	0xFFFFFFFF, 0xFFFFFFFF
 };
@@ -202,14 +203,20 @@ int tas2557_get_bit_rate(struct tas2557_priv *pTAS2557, unsigned char *pBitRate)
 	ret = pTAS2557->read(pTAS2557, TAS2557_ASI1_DAC_FORMAT_REG, &nValue);
 	if (ret >= 0) {
 		bitRate = (nValue&0x18)>>3;
-		if (bitRate == 0)
-			bitRate = 16;
-		else if (bitRate == 1)
-			bitRate = 20;
-		else if (bitRate == 2)
-			bitRate = 24;
-		else if (bitRate == 3)
-			bitRate = 32;
+		switch (bitRate) {
+			case 0:
+				bitRate = 16;
+				break;
+			case 1:
+				bitRate = 20;
+				break;
+			case 2:
+				bitRate = 24;
+				break;
+			case 3:
+				bitRate = 32;
+				break;
+		}
 		*pBitRate = bitRate;
 	}
 
@@ -319,6 +326,7 @@ static void failsafe(struct tas2557_priv *pTAS2557)
 	pTAS2557->write(pTAS2557, TAS2557_SPK_CTRL_REG, 0x04);
 	if (pTAS2557->mpFirmware != NULL)
 		tas2557_clear_firmware(pTAS2557->mpFirmware);
+	pTAS2557->mpFirmware->mnPrograms = 0;
 }
 
 int tas2557_checkPLL(struct tas2557_priv *pTAS2557)
@@ -456,6 +464,7 @@ int tas2557_enable(struct tas2557_priv *pTAS2557, bool bEnable)
 {
 	int nResult = 0;
 	unsigned int nValue;
+	const char *pFWName;
 	struct TProgram *pProgram;
 
 	dev_dbg(pTAS2557->dev, "Enable: %d\n", bEnable);
@@ -463,7 +472,23 @@ int tas2557_enable(struct tas2557_priv *pTAS2557, bool bEnable)
 	if ((pTAS2557->mpFirmware->mnPrograms == 0)
 		|| (pTAS2557->mpFirmware->mnConfigurations == 0)) {
 		dev_err(pTAS2557->dev, "%s, firmware not loaded\n", __func__);
-		goto end;
+		/* Load firmware */
+		if (pTAS2557->mnPGID == TAS2557_PG_VERSION_2P1) {
+			dev_info(pTAS2557->dev, "PG2.1 Silicon found\n");
+			pFWName = TAS2557_FW_NAME;
+		} else if (pTAS2557->mnPGID == TAS2557_PG_VERSION_1P0) {
+			dev_info(pTAS2557->dev, "PG1.0 Silicon found\n");
+			pFWName = TAS2557_PG1P0_FW_NAME;
+		} else {
+			nResult = -ENOTSUPP;
+			dev_info(pTAS2557->dev, "unsupport Silicon 0x%x\n", pTAS2557->mnPGID);
+			goto end;
+		}
+		nResult = request_firmware_nowait(THIS_MODULE, 1, pFWName,
+			pTAS2557->dev, GFP_KERNEL, pTAS2557, tas2557_fw_ready);
+		if(nResult < 0)
+			goto end;
+		dev_err(pTAS2557->dev, "%s, firmware is loaded\n", __func__);
 	}
 	/* check safe guard*/
 	nResult = pTAS2557->read(pTAS2557, TAS2557_SAFE_GUARD_REG, &nValue);
