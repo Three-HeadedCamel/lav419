@@ -15,56 +15,72 @@ jobs:
       with:
         fetch-depth: 0
         
-    - name: Setup environment variables
+    - name: Setup environment
       run: |
         echo "KERNEL_ROOT=$GITHUB_WORKSPACE" >> $GITHUB_ENV
-        echo "Working in: $GITHUB_WORKSPACE"
         
-    - name: Verify repository structure
+    - name: Apply patches with error handling
       run: |
-        echo "Isi repository lav419:"
-        ls -la
-        echo ""
-        echo "Mengecek direktori KernelSU:"
-        if [ -d "KernelSU" ]; then
-          echo "Direktori KernelSU ditemukan"
-          ls -la KernelSU/
-        else
-          echo "Peringatan: Direktori KernelSU tidak ditemukan"
-        fi
+        set +e  # Jangan gagal langsung pada error
         
-    - name: Apply KernelSU patch (jika file ada)
-      run: |
+        # Terapkan patch KernelSU
         if [ -f "KernelSU/10_enable_susfs_for_ksu.patch" ]; then
           echo "Menerapkan patch KernelSU..."
           cd KernelSU
-          patch -p1 < 10_enable_susfs_for_ksu.patch
-          echo "Patch KernelSU berhasil diterapkan"
-        else
-          echo "File patch KernelSU tidak ditemukan, melewati langkah ini"
+          patch -p1 --verbose < 10_enable_susfs_for_ksu.patch
+          echo "Status patch KernelSU: $?"
+          cd ..
         fi
         
-    - name: Apply kernel patch (jika file ada)
-      run: |
+        # Terapkan patch kernel
         if [ -f "50_add_susfs_in_kernel-4.19.patch" ]; then
           echo "Menerapkan patch kernel..."
-          patch -p1 < 50_add_susfs_in_kernel-4.19.patch
-          echo "Patch kernel berhasil diterapkan"
-        else
-          echo "File patch kernel tidak ditemukan, melewati langkah ini"
+          patch -p1 --verbose < 50_add_susfs_in_kernel-4.19.patch
+          echo "Status patch kernel: $?"
         fi
         
-    - name: Commit and push changes (jika ada perubahan)
+        # Periksa file .rej yang dihasilkan
+        echo "File reject yang dihasilkan:"
+        find . -name "*.rej" -type f | head -10
+        
+        set -e  # Kembali ke mode fail-on-error
+        
+    - name: Handle patch rejects
       run: |
+        # Hitung jumlah file .rej
+        REJ_COUNT=$(find . -name "*.rej" -type f | wc -l)
+        echo "Jumlah file reject: $REJ_COUNT"
+        
+        if [ "$REJ_COUNT" -gt 0 ]; then
+          echo "Peringatan: Beberapa patch gagal diterapkan sepenuhnya"
+          echo "File .rej telah dibuat yang menunjukkan bagian yang gagal"
+          
+          # Simpan file reject sebagai artifact untuk diperiksa
+          mkdir -p patch-rejects
+          find . -name "*.rej" -exec cp {} patch-rejects/ \;
+        fi
+        
+    - name: Upload patch rejects as artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: patch-rejects
+        path: patch-rejects/
+        
+    - name: Commit successful changes
+      run: |
+        # Hanya commit jika tidak ada file .rej atau kita memutuskan untuk continue
         git config --local user.email "github-actions@github.com"
         git config --local user.name "GitHub Actions"
         git add .
         
-        # Hanya commit jika ada perubahan
+        # Jangan commit file .rej
+        find . -name "*.rej" -exec git rm --cached {} \; 2>/dev/null || true
+        
         if ! git diff --staged --quiet; then
-          git commit -m "Apply KernelSU patches"
+          git commit -m "Apply KernelSU patches (partial)"
           git push
-          echo "Perubahan telah di-push ke repository"
+          echo "Perubahan yang berhasil telah di-push"
         else
-          echo "Tidak ada perubahan yang perlu di-commit"
+          echo "Tidak ada perubahan yang berhasil diterapkan"
         fi
