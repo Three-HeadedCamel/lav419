@@ -1,6 +1,7 @@
 #include <linux/uaccess.h>
 #include <linux/types.h>
 #include <linux/version.h>
+#include <linux/syscalls.h>
 
 #include "../klog.h" // IWYU pragma: keep
 #include "selinux.h"
@@ -8,6 +9,10 @@
 #include "ss/services.h"
 #include "linux/lsm_audit.h"
 #include "xfrm.h"
+#include "kernelsu.h"
+#ifdef CONFIG_KSU_SUSFS
+#include "../susfs/susfs.h"
+#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 #define SELINUX_POLICY_INSTEAD_SELINUX_SS
@@ -38,16 +43,18 @@ static struct policydb *get_policydb(void)
 
 static DEFINE_MUTEX(ksu_rules);
 
-void apply_kernelsu_rules()
+void ksu_apply_kernelsu_rules()
 {
 	struct policydb *db;
 
-	if (!getenforce()) {
+	if (!ksu_getenforce()) {
 		pr_info("SELinux permissive or disabled, apply rules!\n");
 	}
 
 	mutex_lock(&ksu_rules);
 
+	rcu_read_lock();
+	
 	db = get_policydb();
 
 	ksu_permissive(db, KERNEL_SU_DOMAIN);
@@ -139,6 +146,15 @@ void apply_kernelsu_rules()
 	ksu_allow(db, "system_server", KERNEL_SU_DOMAIN, "process", "getpgid");
 	ksu_allow(db, "system_server", KERNEL_SU_DOMAIN, "process", "sigkill");
 
+#ifdef CONFIG_KSU_SUSFS
+	// Allow umount in zygote process without installing zygisk
+	ksu_allow(db, "zygote", "labeledfs", "filesystem", "unmount");
+	susfs_set_init_sid();
+	susfs_set_ksu_sid();
+	susfs_set_zygote_sid();
+#endif
+
+	rcu_read_unlock();
 	mutex_unlock(&ksu_rules);
 }
 
@@ -401,7 +417,7 @@ int ksu_handle_sepolicy(unsigned long arg3, void __user *arg4)
 		if (success)
 			ret = 0;
 
-	} else if (cmd == CMD_TYPE || cmd == CMD_TYPE_ATTR) {
+	} else if (cmd == CMD_TYPE || cmd == CCMD_TYPE_ATTR) {
 		char type[MAX_SEPOL_LEN];
 		char attr[MAX_SEPOL_LEN];
 
