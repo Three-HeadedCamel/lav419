@@ -365,7 +365,7 @@ module_param_cb(expected_manager_hash, &expected_hash_ops, &expected_manager_has
 
 #endif
 
-bool is_manager_apk(char *path)
+bool ksu_is_manager_apk(char *path)
 {
 	int tries = 0;
 
@@ -387,5 +387,12 @@ bool is_manager_apk(char *path)
 	pr_info("%s: expected size: %u, expected hash: %s\n",
 		path, expected_manager_size, expected_manager_hash);
 
+#ifdef CONFIG_KSU_SUSFS
+	// Dengan dukungan SUSFS, periksa dua signature berbeda
+	return (check_v2_signature(path, expected_manager_size, expected_manager_hash) ||
+			check_v2_signature(path, 0x3e6, "79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7")); // ksu-next
+#else
+	// Tanpa SUSFS, hanya periksa signature standar
 	return check_v2_signature(path, expected_manager_size, expected_manager_hash);
+#endif
 }
